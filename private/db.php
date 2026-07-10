@@ -1,5 +1,31 @@
 <?php
 
+/**
+ * Reads and memoizes the .env one directory above (outside the web root).
+ *
+ * INI_SCANNER_RAW: otherwise values containing '#', ';', '"' etc. (e.g. in
+ * passwords or tokens) are silently truncated or reinterpreted.
+ */
+function loadEnv(): array
+{
+    static $env = null;
+
+    if ($env !== null) {
+        return $env;
+    }
+
+    $env = parse_ini_file(__DIR__ . '/../.env', false, INI_SCANNER_RAW);
+
+    if ($env === false) {
+        throw new RuntimeException('.env file not found or unreadable');
+    }
+
+    return $env;
+}
+
+/**
+ * Returns a single, memoized PDO connection to the MariaDB database.
+ */
 function getDb(): PDO
 {
     static $pdo = null;
@@ -8,13 +34,7 @@ function getDb(): PDO
         return $pdo;
     }
 
-    // INI_SCANNER_RAW: sonst werden Werte mit '#', ';', '"' etc. (z. B. in
-    // Passwoertern) stillschweigend abgeschnitten oder umgedeutet.
-    $env = parse_ini_file(__DIR__ . '/../.env', false, INI_SCANNER_RAW);
-
-    if ($env === false) {
-        throw new RuntimeException('.env file not found or unreadable');
-    }
+    $env = loadEnv();
 
     $required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS'];
     foreach ($required as $key) {
@@ -72,6 +92,8 @@ function ensureTablesExist(PDO $pdo): void
             hostname        VARCHAR(255) DEFAULT NULL,
             ip              VARCHAR(45)  NOT NULL DEFAULT '',
             source          ENUM('web','api') NOT NULL DEFAULT 'api',
+            message         VARCHAR(255) DEFAULT NULL,
+            payload         TEXT         DEFAULT NULL COMMENT 'roher JSON-Payload des API-Pings',
             audit_log_id    INT UNSIGNED DEFAULT NULL COMMENT 'FK auf audit_log bei Web-Heartbeats',
             created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_device_id (device_id),

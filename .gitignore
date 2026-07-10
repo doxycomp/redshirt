@@ -1,1 +1,35 @@
+# Secrets & config
 .env
+.env.local
+*.local
+
+# AI / agent tooling
+.claude/
+.cursor/
+.aider*
+.opencode/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temp
+*.log
+logs/
+tmp/
+
+# PHP dependencies (falls spaeter Composer dazukommt)
+/vendor/
+
+# Python (Test-Pings / Tooling)
+__pycache__/
+*.pyc
+.venv/
+venv/
