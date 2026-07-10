@@ -51,6 +51,7 @@ function ensureTablesExist(PDO $pdo): void
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS audit_log (
             id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            note            TEXT         DEFAULT NULL,
             ip              VARCHAR(45)  NOT NULL DEFAULT '',
             user_agent      VARCHAR(512) NOT NULL DEFAULT '',
             resolution      VARCHAR(20)  DEFAULT NULL,
