@@ -1,2 +1,3 @@
-# redshirt
-small website with endpoint for logging views/clicks/calls
+# Redshirt
+
+Audit Trail & Dashboard
