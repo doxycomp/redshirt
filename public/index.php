@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+require __DIR__ . '/../private/db.php';
+
 // Return a clean JSON 500 for any uncaught error instead of leaking SQL /
-// host details (or a stack trace when display_errors is on).
+// host details (or a stack trace when display_errors is on). Registered
+// before getDb() so a missing/invalid .env is caught here too.
 set_exception_handler(function (Throwable $e): void {
     error_log('index.php: ' . $e->getMessage());
     http_response_code(500);
@@ -11,35 +14,9 @@ set_exception_handler(function (Throwable $e): void {
     echo json_encode(['status' => 'error', 'message' => 'Internal server error']);
 });
 
-$env = parse_ini_file(__DIR__ . '/../.env', false, INI_SCANNER_RAW);
-if ($env === false) {
-    error_log('index.php: .env not found or unreadable');
-    http_response_code(500);
-    exit('Configuration error');
-}
-
-$required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS'];
-foreach ($required as $key) {
-    if (!isset($env[$key]) || $env[$key] === '') {
-        // Log server-side; do not reveal which key is missing to the client.
-        error_log("index.php: missing required .env key: $key");
-        http_response_code(500);
-        exit('Configuration error');
-    }
-}
-
-$dsn = sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $env['DB_HOST'], $env['DB_NAME']);
-if (isset($env['DB_PORT']) && $env['DB_PORT'] !== '') {
-    $dsn .= ';port=' . $env['DB_PORT'];
-}
-
-$pdo = new PDO($dsn, $env['DB_USER'], $env['DB_PASS'], [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    PDO::ATTR_EMULATE_PREPARES   => false,
-]);
-
-// Schema is created once via private/migrate.php, not on every request.
+// Single shared connection helper. Schema is created once via
+// private/migrate.php, not on every request.
+$pdo = getDb();
 
 // Harden the session cookie before the session is started.
 session_set_cookie_params([
