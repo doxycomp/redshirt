@@ -28,6 +28,10 @@ $migrations = [
     // Added after the first deploy; missing on installs created before it,
     // which caused "1054 Unknown column 'note'" on the audit_log INSERT.
     "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS note TEXT DEFAULT NULL AFTER id",
+
+    // endpoint.php (Raspi API): free-text summary + raw JSON payload.
+    "ALTER TABLE heartbeat_log ADD COLUMN IF NOT EXISTS message VARCHAR(255) DEFAULT NULL AFTER source",
+    "ALTER TABLE heartbeat_log ADD COLUMN IF NOT EXISTS payload TEXT DEFAULT NULL AFTER message",
 ];
 
 foreach ($migrations as $sql) {
