@@ -1,7 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
+// Return a clean JSON 500 for any uncaught error instead of leaking SQL /
+// host details (or a stack trace when display_errors is on).
+set_exception_handler(function (Throwable $e): void {
+    error_log('index.php: ' . $e->getMessage());
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'Internal server error']);
+});
+
 $env = parse_ini_file(__DIR__ . '/../.env', false, INI_SCANNER_RAW);
 if ($env === false) {
+    error_log('index.php: .env not found or unreadable');
     http_response_code(500);
     exit('Configuration error');
 }
@@ -9,8 +21,10 @@ if ($env === false) {
 $required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS'];
 foreach ($required as $key) {
     if (!isset($env[$key]) || $env[$key] === '') {
+        // Log server-side; do not reveal which key is missing to the client.
+        error_log("index.php: missing required .env key: $key");
         http_response_code(500);
-        exit("Missing required .env key: $key");
+        exit('Configuration error');
     }
 }
 
@@ -25,43 +39,19 @@ $pdo = new PDO($dsn, $env['DB_USER'], $env['DB_PASS'], [
     PDO::ATTR_EMULATE_PREPARES   => false,
 ]);
 
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS audit_log (
-        id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        note            TEXT         DEFAULT NULL,
-        ip              VARCHAR(45)  NOT NULL DEFAULT '',
-        user_agent      VARCHAR(512) NOT NULL DEFAULT '',
-        resolution      VARCHAR(20)  DEFAULT NULL,
-        timezone        VARCHAR(64)  DEFAULT NULL,
-        session_id      VARCHAR(64)  DEFAULT NULL,
-        last_heartbeat  DATETIME     DEFAULT NULL,
-        created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_created_at (created_at),
-        INDEX idx_session_id (session_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
+// Schema is created once via private/migrate.php, not on every request.
 
-$pdo->exec("
-    CREATE TABLE IF NOT EXISTS heartbeat_log (
-        id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        device_id       VARCHAR(128) NOT NULL,
-        hostname        VARCHAR(255) DEFAULT NULL,
-        ip              VARCHAR(45)  NOT NULL DEFAULT '',
-        source          ENUM('web','api') NOT NULL DEFAULT 'api',
-        audit_log_id    INT UNSIGNED DEFAULT NULL,
-        created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_device_id (device_id),
-        INDEX idx_created_at (created_at),
-        CONSTRAINT fk_heartbeat_audit
-            FOREIGN KEY (audit_log_id) REFERENCES audit_log(id)
-            ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-");
-
+// Harden the session cookie before the session is started.
+session_set_cookie_params([
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 session_start();
-if (empty(session_id())) {
+if (empty($_SESSION['initialized'])) {
+    // Mitigate session fixation exactly once per new session. The previous
+    // empty(session_id()) check never fired, so this never ran.
     session_regenerate_id(true);
+    $_SESSION['initialized'] = true;
 }
 
 $sessionId = session_id();
@@ -72,22 +62,41 @@ $auditId = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $note = isset($_POST['note']) ? trim($_POST['note']) : '';
     $clientData = isset($_POST['client_data']) ? json_decode($_POST['client_data'], true) : [];
+    if (!is_array($clientData)) {
+        $clientData = [];
+    }
 
     if (isset($_GET['action']) && $_GET['action'] === 'heartbeat') {
+        // Only accept an audit_id that belongs to the current session.
+        // Otherwise a client could bump last_heartbeat on rows it does not
+        // own (IDOR) or trigger an uncaught FK violation with a bogus id.
+        $auditLogId = null;
+        if (isset($_POST['audit_id']) && is_string($_POST['audit_id']) && ctype_digit($_POST['audit_id'])) {
+            $check = $pdo->prepare("SELECT id FROM audit_log WHERE id = :id AND session_id = :sid");
+            $check->execute([':id' => $_POST['audit_id'], ':sid' => $sessionId]);
+            $owned = $check->fetchColumn();
+            if ($owned !== false) {
+                $auditLogId = (int) $owned;
+            }
+        }
+
         $stmt = $pdo->prepare("
             INSERT INTO heartbeat_log (device_id, hostname, ip, source, audit_log_id, created_at)
             VALUES (:device_id, :hostname, :ip, 'web', :audit_log_id, NOW())
         ");
         $stmt->execute([
             ':device_id'    => $sessionId,
-            ':hostname'     => gethostname(),
+            // Web clients can't report a hostname; gethostname() would only
+            // ever store the server's own name, so leave it NULL.
+            ':hostname'     => null,
             ':ip'           => $ip,
-            ':audit_log_id' => $_POST['audit_id'] ?? null,
+            ':audit_log_id' => $auditLogId,
         ]);
-        if (!empty($_POST['audit_id'])) {
+        if ($auditLogId !== null) {
             $pdo->prepare("UPDATE audit_log SET last_heartbeat = NOW() WHERE id = :id")
-                ->execute([':id' => $_POST['audit_id']]);
+                ->execute([':id' => $auditLogId]);
         }
+        header('Content-Type: application/json');
         echo json_encode(['status' => 'ok']);
         exit;
     }
