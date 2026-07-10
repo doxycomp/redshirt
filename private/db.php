@@ -8,7 +8,9 @@ function getDb(): PDO
         return $pdo;
     }
 
-    $env = parse_ini_file(__DIR__ . '/../.env');
+    // INI_SCANNER_RAW: sonst werden Werte mit '#', ';', '"' etc. (z. B. in
+    // Passwoertern) stillschweigend abgeschnitten oder umgedeutet.
+    $env = parse_ini_file(__DIR__ . '/../.env', false, INI_SCANNER_RAW);
 
     if ($env === false) {
         throw new RuntimeException('.env file not found or unreadable');
@@ -16,12 +18,17 @@ function getDb(): PDO
 
     $required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS'];
     foreach ($required as $key) {
-        if (empty($env[$key])) {
+        // Bewusst kein empty(): ein legitimer Wert wie '0' darf nicht als
+        // fehlend gelten.
+        if (!isset($env[$key]) || $env[$key] === '') {
             throw new RuntimeException("Missing required .env key: $key");
         }
     }
 
     $dsn = sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', $env['DB_HOST'], $env['DB_NAME']);
+    if (isset($env['DB_PORT']) && $env['DB_PORT'] !== '') {
+        $dsn .= ';port=' . $env['DB_PORT'];
+    }
 
     $pdo = new PDO($dsn, $env['DB_USER'], $env['DB_PASS'], [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -29,11 +36,16 @@ function getDb(): PDO
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
 
-    ensureTablesExist($pdo);
-
     return $pdo;
 }
 
+/**
+ * Legt das Datenbankschema an, falls noch nicht vorhanden.
+ *
+ * Bewusst NICHT Teil von getDb(): DDL gehoert nicht in den Runtime-Pfad
+ * (impliziter Commit, Vermischung von Verantwortlichkeiten). Einmalig ueber
+ * private/migrate.php aufrufen.
+ */
 function ensureTablesExist(PDO $pdo): void
 {
     $pdo->exec("
