@@ -19,8 +19,8 @@ session_set_cookie_params([
 ]);
 session_start();
 
-$adminPassword = $env['ADMIN_PASSWORD'] ?? '';
-if ($adminPassword === '' || $adminPassword === 'change_me') {
+$adminPasswordHash = $env['ADMIN_PASSWORD'] ?? '';
+if ($adminPasswordHash === '' || $adminPasswordHash === 'change_me') {
     http_response_code(500);
     exit('ADMIN_PASSWORD not configured in .env');
 }
@@ -33,7 +33,7 @@ if (isset($_GET['logout'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
-    if (hash_equals($adminPassword, $_POST['password'])) {
+    if (hash_equals($adminPasswordHash, hash('sha256', $_POST['password']))) {
         $_SESSION['authenticated'] = true;
         header('Location: backend.php');
         exit;
