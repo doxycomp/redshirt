@@ -13,6 +13,8 @@ set_exception_handler(function (Throwable $e): void {
 $env = loadEnv();
 $pdo = getDb();
 
+$anonymize = filter_var($env['ANONYMIZE_OUTPUT'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+
 session_set_cookie_params([
     'httponly' => true,
     'samesite' => 'Lax',
@@ -144,6 +146,22 @@ $heartbeatStmt = $pdo->prepare("
 ");
 $heartbeatStmt->execute($heartbeatParams);
 $heartbeatLogs = $heartbeatStmt->fetchAll();
+
+$anonLabel = '[anonymized]';
+if ($anonymize) {
+    foreach ($auditLogs as &$row) {
+        $row['ip'] = $anonLabel;
+        $row['user_agent'] = $anonLabel;
+        if (isset($row['last_user_agent'])) {
+            $row['last_user_agent'] = $anonLabel;
+        }
+    }
+    unset($row);
+    foreach ($heartbeatLogs as &$row) {
+        $row['ip'] = $anonLabel;
+    }
+    unset($row);
+}
 ?>
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
