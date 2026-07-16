@@ -94,19 +94,45 @@ $heartbeatWhere = '';
 $heartbeatParams = [];
 
 if ($deviceFilter !== '') {
-    $auditWhere = "AND (a.session_id = :did OR a.id IN (SELECT DISTINCT audit_log_id FROM heartbeat_log WHERE device_id = :did AND audit_log_id IS NOT NULL))";
-    $auditParams[':did'] = $deviceFilter;
-    $heartbeatWhere = "AND device_id = :did";
-    $heartbeatParams[':did'] = $deviceFilter;
+    $auditWhere = "AND (a.session_id = :did_filter OR a.id IN (SELECT DISTINCT audit_log_id FROM heartbeat_log WHERE device_id = :did_filter2 AND audit_log_id IS NOT NULL))";
+    $auditParams[':did_filter'] = $deviceFilter;
+    $auditParams[':did_filter2'] = $deviceFilter;
+    $heartbeatWhere = "AND device_id = :did_filter";
+    $heartbeatParams[':did_filter'] = $deviceFilter;
 }
 
-$auditStmt = $pdo->prepare("
-    SELECT a.id, a.note, a.ip, a.user_agent, a.resolution, a.timezone, a.last_heartbeat, a.created_at, a.updated_at
-    FROM audit_log a
-    WHERE 1=1 $auditWhere
-    ORDER BY a.created_at DESC
-    LIMIT 100
-");
+$sort = $_GET['sort'] ?? 'created_at_desc';
+$groupByIp = isset($_GET['group_by_ip']);
+
+$auditOrder = match ($sort) {
+    'ip_asc'        => 'a.ip ASC, a.created_at DESC',
+    'ip_desc'       => 'a.ip DESC, a.created_at DESC',
+    'id_asc'        => 'a.id ASC',
+    'id_desc'       => 'a.id DESC',
+    'note_asc'      => 'a.note ASC, a.created_at DESC',
+    'note_desc'     => 'a.note DESC, a.created_at DESC',
+    'created_at_asc' => 'a.created_at ASC',
+    default         => 'a.created_at DESC',
+};
+
+$heartbeatOrder = match ($sort) {
+    'ip_asc'        => 'ip ASC, created_at DESC',
+    'ip_desc'       => 'ip DESC, created_at DESC',
+    'id_asc'        => 'id ASC',
+    'id_desc'       => 'id DESC',
+    'created_at_asc' => 'created_at ASC',
+    default         => 'created_at DESC',
+};
+
+$auditFields = $groupByIp
+    ? "a.ip, COUNT(*) AS cnt, GROUP_CONCAT(a.id ORDER BY a.created_at DESC) AS ids, MAX(a.created_at) AS last_seen, MIN(a.created_at) AS first_seen, MAX(a.note) AS last_note, MAX(a.user_agent) AS last_user_agent"
+    : "a.id, a.note, a.ip, a.user_agent, a.resolution, a.timezone, a.last_heartbeat, a.created_at, a.updated_at";
+
+$auditFrom = $groupByIp
+    ? "FROM audit_log a WHERE 1=1 $auditWhere GROUP BY a.ip ORDER BY " . ($sort === 'ip_asc' ? 'a.ip ASC' : ($sort === 'ip_desc' ? 'a.ip DESC' : 'MAX(a.created_at) DESC'))
+    : "FROM audit_log a WHERE 1=1 $auditWhere ORDER BY $auditOrder";
+
+$auditStmt = $pdo->prepare("SELECT $auditFields $auditFrom");
 $auditStmt->execute($auditParams);
 $auditLogs = $auditStmt->fetchAll();
 
@@ -114,8 +140,7 @@ $heartbeatStmt = $pdo->prepare("
     SELECT id, device_id, hostname, ip, source, audit_log_id, created_at
     FROM heartbeat_log
     WHERE 1=1 $heartbeatWhere
-    ORDER BY created_at DESC
-    LIMIT 100
+    ORDER BY $heartbeatOrder
 ");
 $heartbeatStmt->execute($heartbeatParams);
 $heartbeatLogs = $heartbeatStmt->fetchAll();
@@ -141,6 +166,9 @@ body { background: #0d1117; color: #c9d1d9; }
 .badge-web { background: #1f6feb; }
 .badge-api { background: #8957e5; }
 .empty-state { color: #484f58; font-style: italic; }
+.form-check-input { background-color: #0d1117; border-color: #30363d; }
+.form-check-input:checked { background-color: #238636; border-color: #238636; }
+.badge-info { background: #1f6feb; }
 a { color: #58a6ff; }
 </style>
 </head>
@@ -166,6 +194,25 @@ a { color: #58a6ff; }
                 <?php endforeach; ?>
             </select>
         </div>
+        <div class="col-auto">
+            <label for="sort" class="form-label small mb-1">Sort</label>
+            <select class="form-select form-select-sm" id="sort" name="sort" onchange="this.form.submit()">
+                <option value="created_at_desc" <?php echo $sort === 'created_at_desc' ? 'selected' : ''; ?>>Newest first</option>
+                <option value="created_at_asc" <?php echo $sort === 'created_at_asc' ? 'selected' : ''; ?>>Oldest first</option>
+                <option value="ip_asc" <?php echo $sort === 'ip_asc' ? 'selected' : ''; ?>>IP (A-Z)</option>
+                <option value="ip_desc" <?php echo $sort === 'ip_desc' ? 'selected' : ''; ?>>IP (Z-A)</option>
+                <option value="id_asc" <?php echo $sort === 'id_asc' ? 'selected' : ''; ?>>ID (asc)</option>
+                <option value="id_desc" <?php echo $sort === 'id_desc' ? 'selected' : ''; ?>>ID (desc)</option>
+                <option value="note_asc" <?php echo $sort === 'note_asc' ? 'selected' : ''; ?>>Note (A-Z)</option>
+                <option value="note_desc" <?php echo $sort === 'note_desc' ? 'selected' : ''; ?>>Note (Z-A)</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <div class="form-check mt-3">
+                <input class="form-check-input" type="checkbox" id="groupByIp" name="group_by_ip" onchange="this.form.submit()" <?php echo $groupByIp ? 'checked' : ''; ?>>
+                <label class="form-check-label small" for="groupByIp">Group by IP</label>
+            </div>
+        </div>
         <?php if ($deviceFilter !== ''): ?>
             <div class="col-auto">
                 <a href="backend.php" class="btn btn-outline-light btn-sm">Clear filter</a>
@@ -175,11 +222,43 @@ a { color: #58a6ff; }
 
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <span class="fw-semibold">Audit Log</span>
-            <span class="badge text-bg-secondary"><?php echo count($auditLogs); ?> entries</span>
+            <span class="fw-semibold">Audit Log<?php echo $groupByIp ? ' (grouped by IP)' : ''; ?></span>
+            <span class="badge text-bg-secondary"><?php echo count($auditLogs); ?> <?php echo $groupByIp ? 'IPs' : 'entries'; ?></span>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
+                <?php if ($groupByIp): ?>
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>IP</th>
+                            <th>Entries</th>
+                            <th>Entry IDs</th>
+                            <th>First Seen</th>
+                            <th>Last Seen</th>
+                            <th>Last Note</th>
+                            <th>Last UA</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($auditLogs)): ?>
+                            <tr><td colspan="7" class="empty-state text-center py-4">No audit entries found.</td></tr>
+                        <?php else: ?>
+                            <?php foreach ($auditLogs as $row): ?>
+                            <tr>
+                                <td class="text-nowrap"><code><?php echo htmlspecialchars($row['ip'], ENT_QUOTES, 'UTF-8'); ?></code></td>
+                                <td><span class="badge text-bg-info"><?php echo (int) $row['cnt']; ?></span></td>
+                                <td class="small text-muted" style="max-width:250px; word-break:break-all"><?php echo htmlspecialchars($row['ids'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td class="text-nowrap"><?php echo htmlspecialchars($row['first_seen'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td class="text-nowrap"><?php echo htmlspecialchars($row['last_seen'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars((string) ($row['last_note'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td class="text-truncate" style="max-width:180px"><?php echo htmlspecialchars((string) ($row['last_user_agent'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+                <?php else: ?>
                 <table class="table table-sm mb-0">
                     <thead>
                         <tr>
@@ -212,6 +291,7 @@ a { color: #58a6ff; }
                         <?php endif; ?>
                     </tbody>
                 </table>
+                <?php endif; ?>
             </div>
         </div>
     </div>
