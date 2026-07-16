@@ -22,23 +22,28 @@ TOKEN="${REDSHIRT_TOKEN:-dein_geheimer_api_token}"
 # --- Collect metrics --------------------------------------------------------
 DEVICE="$(hostname)"
 
-# CPU temperature in °C. Raspberry Pi OS exposes it in millidegrees.
+# CPU temperature in °C -> a clean number, or the JSON literal null.
+# Validate before use: an empty/odd value would produce invalid JSON
+# ("temperature_c": ,). Raspberry Pi OS exposes millidegrees in thermal_zone0.
+TEMP="null"
+TEMP_RAW=""
 if command -v vcgencmd >/dev/null 2>&1; then
-    TEMP="$(vcgencmd measure_temp | grep -oE '[0-9]+\.[0-9]+')"
+    TEMP_RAW="$(vcgencmd measure_temp 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)"
 elif [ -r /sys/class/thermal/thermal_zone0/temp ]; then
-    TEMP="$(awk '{ printf "%.1f", $1 / 1000 }' /sys/class/thermal/thermal_zone0/temp)"
-else
-    TEMP="null"
+    TEMP_RAW="$(awk '{ printf "%.1f", $1 / 1000 }' /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
 fi
+[[ "$TEMP_RAW" =~ ^[0-9]+(\.[0-9]+)?$ ]] && TEMP="$TEMP_RAW"
 
-# Number of distinct WLANs in range (best effort; needs a wireless interface).
+# Number of distinct WLANs in range -> always exactly one integer.
+# NB: `grep -c` prints "0" and exits 1 on zero matches; the old `|| echo 0`
+# then printed a SECOND "0", so WLAN_COUNT became "0\n0" and broke the JSON.
+WLAN_COUNT=0
 if command -v nmcli >/dev/null 2>&1; then
-    WLAN_COUNT="$(nmcli -t -f SSID dev wifi list 2>/dev/null | grep -c . || echo 0)"
+    WLAN_COUNT="$(nmcli -t -f SSID dev wifi list 2>/dev/null | grep -c . || true)"
 elif command -v iwlist >/dev/null 2>&1; then
-    WLAN_COUNT="$(iwlist scan 2>/dev/null | grep -c 'ESSID:' || echo 0)"
-else
-    WLAN_COUNT=0
+    WLAN_COUNT="$(iwlist scan 2>/dev/null | grep -c 'ESSID:' || true)"
 fi
+case "$WLAN_COUNT" in ''|*[!0-9]*) WLAN_COUNT=0 ;; esac
 
 MESSAGE="up | ${TEMP}°C | ${WLAN_COUNT} WLANs"
 
