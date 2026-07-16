@@ -19,10 +19,10 @@ session_set_cookie_params([
 ]);
 session_start();
 
-$adminPasswordHash = $env['ADMIN_PASSWORD'] ?? '';
+$adminPasswordHash = $env['ADMIN_PASS'] ?? '';
 if ($adminPasswordHash === '' || $adminPasswordHash === 'change_me') {
     http_response_code(500);
-    exit('ADMIN_PASSWORD not configured in .env');
+    exit('ADMIN_PASS not configured in .env');
 }
 
 if (isset($_GET['logout'])) {
